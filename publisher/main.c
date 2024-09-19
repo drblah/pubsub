@@ -197,38 +197,31 @@ addVariable(UA_Server *server)
 static void
 updateTheAnswer(UA_Server *server,
                void *data) {
-    UA_NodeId myIntegerNodeId = UA_NODEID_STRING(1, "the.answer");
 
-    /* Write a different integer value */
-    UA_Int32 myInteger = 0;
+    UA_NodeId node_id = UA_NODEID_STRING(1, "the.answer");
 
-        UA_Variant outData;
-    UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND,
-                "before read");
-    UA_StatusCode retval = UA_Server_readValue(server, myIntegerNodeId, &outData);
-    UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND,
-                    "after read");
+    UA_Int32 theAnswerInteger = 0;
+    UA_Variant outData;
 
+    UA_StatusCode status = UA_Server_readValue(server, node_id, &outData);
 
-    if (retval != UA_STATUSCODE_GOOD)
+    if (status != UA_STATUSCODE_GOOD)
     {
         UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND,
                 "Failed to read the value!");
+        return;
     }
 
-    myInteger = *(UA_Int32*)outData.data;
+    theAnswerInteger = *(UA_Int32*)outData.data;
     UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND,
-                "The value is: %i", myInteger);
+                "The value is: %i", theAnswerInteger);
 
-    myInteger = myInteger + 1;
+    theAnswerInteger = theAnswerInteger + 1;
 
-    UA_Variant myVar;
-    UA_Variant_init(&myVar);
-    UA_Variant_setScalar(&myVar, &myInteger, &UA_TYPES[UA_TYPES_INT32]);
-    UA_Server_writeValue(server, myIntegerNodeId, myVar);
-
-    UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND,
-                "The variable was updated");
+    UA_Variant updatedValue;
+    UA_Variant_init(&updatedValue);
+    UA_Variant_setScalar(&updatedValue, &theAnswerInteger, &UA_TYPES[UA_TYPES_INT32]);
+    UA_Server_writeValue(server, node_id, updatedValue);
 }
 
 static void
