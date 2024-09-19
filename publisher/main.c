@@ -79,17 +79,41 @@ addPublishedDataSet(UA_Server *server) {
 static void
 addDataSetField(UA_Server *server) {
     /* Add a field to the previous created PublishedDataSet */
+    {
+        UA_NodeId dataSetFieldIdent;
+        UA_DataSetFieldConfig dataSetFieldConfig;
+        memset(&dataSetFieldConfig, 0, sizeof(UA_DataSetFieldConfig));
+        dataSetFieldConfig.dataSetFieldType = UA_PUBSUB_DATASETFIELD_VARIABLE;
+        dataSetFieldConfig.field.variable.fieldNameAlias = UA_STRING("Server localtime");
+        dataSetFieldConfig.field.variable.promotedField = false;
+        dataSetFieldConfig.field.variable.publishParameters.publishedVariable =
+            UA_NS0ID(SERVER_SERVERSTATUS_CURRENTTIME);
+        dataSetFieldConfig.field.variable.publishParameters.attributeId = UA_ATTRIBUTEID_VALUE;
+        UA_DataSetFieldResult result;
+        result = UA_Server_addDataSetField(server, publishedDataSetIdent,
+                                  &dataSetFieldConfig, &dataSetFieldIdent);
+
+        if (result.result != UA_STATUSCODE_GOOD) {
+            printf("Failed to add data set field!!!!!\n");
+        }
+    }
+
     UA_NodeId dataSetFieldIdent;
     UA_DataSetFieldConfig dataSetFieldConfig;
     memset(&dataSetFieldConfig, 0, sizeof(UA_DataSetFieldConfig));
     dataSetFieldConfig.dataSetFieldType = UA_PUBSUB_DATASETFIELD_VARIABLE;
-    dataSetFieldConfig.field.variable.fieldNameAlias = UA_STRING("Server localtime");
+    dataSetFieldConfig.field.variable.fieldNameAlias = UA_STRING("An Int32");
     dataSetFieldConfig.field.variable.promotedField = false;
     dataSetFieldConfig.field.variable.publishParameters.publishedVariable =
-        UA_NS0ID(SERVER_SERVERSTATUS_CURRENTTIME);
+        UA_NODEID_STRING(1, "the.answer");
     dataSetFieldConfig.field.variable.publishParameters.attributeId = UA_ATTRIBUTEID_VALUE;
-    UA_Server_addDataSetField(server, publishedDataSetIdent,
+    UA_DataSetFieldResult result;
+    result = UA_Server_addDataSetField(server, publishedDataSetIdent,
                               &dataSetFieldConfig, &dataSetFieldIdent);
+    if (result.result != UA_STATUSCODE_GOOD) {
+        printf("Failed to add data set field cInt32!!!!!\n");
+    }
+
 }
 
 /**
@@ -143,10 +167,76 @@ addDataSetWriter(UA_Server *server) {
     memset(&dataSetWriterConfig, 0, sizeof(UA_DataSetWriterConfig));
     dataSetWriterConfig.name = UA_STRING("Demo DataSetWriter");
     dataSetWriterConfig.dataSetWriterId = 62541;
-    dataSetWriterConfig.keyFrameCount = 10;
+    dataSetWriterConfig.keyFrameCount = 0;
     UA_Server_addDataSetWriter(server, writerGroupIdent, publishedDataSetIdent,
                                &dataSetWriterConfig, &dataSetWriterIdent);
 }
+
+static void
+addVariable(UA_Server *server)
+{
+    /* Define the attribute of the myInteger variable node */
+    UA_VariableAttributes attr = UA_VariableAttributes_default;
+    UA_Int32 myInteger = 42;
+    UA_Variant_setScalar(&attr.value, &myInteger, &UA_TYPES[UA_TYPES_INT32]);
+    attr.description = UA_LOCALIZEDTEXT("en-US","the answer");
+    attr.displayName = UA_LOCALIZEDTEXT("en-US","the answer");
+    attr.dataType = UA_TYPES[UA_TYPES_INT32].typeId;
+    attr.accessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
+
+    /* Add the variable node to the information model */
+    UA_NodeId myIntegerNodeId = UA_NODEID_STRING(1, "the.answer");
+    UA_QualifiedName myIntegerName = UA_QUALIFIEDNAME(1, "the answer");
+    UA_NodeId parentNodeId = UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER);
+    UA_NodeId parentReferenceNodeId = UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES);
+    UA_Server_addVariableNode(server, myIntegerNodeId, parentNodeId,
+                              parentReferenceNodeId, myIntegerName,
+                              UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), attr, NULL, NULL);
+}
+
+static void
+updateTheAnswer(UA_Server *server,
+               void *data) {
+    UA_NodeId myIntegerNodeId = UA_NODEID_STRING(1, "the.answer");
+
+    /* Write a different integer value */
+    UA_Int32 myInteger = 0;
+
+        UA_Variant outData;
+    UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND,
+                "before read");
+    UA_StatusCode retval = UA_Server_readValue(server, myIntegerNodeId, &outData);
+    UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND,
+                    "after read");
+
+
+    if (retval != UA_STATUSCODE_GOOD)
+    {
+        UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND,
+                "Failed to read the value!");
+    }
+
+    myInteger = *(UA_Int32*)outData.data;
+    UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND,
+                "The value is: %i", myInteger);
+
+    myInteger = myInteger + 1;
+
+    UA_Variant myVar;
+    UA_Variant_init(&myVar);
+    UA_Variant_setScalar(&myVar, &myInteger, &UA_TYPES[UA_TYPES_INT32]);
+    UA_Server_writeValue(server, myIntegerNodeId, myVar);
+
+    UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND,
+                "The variable was updated");
+}
+
+static void
+addCallback(UA_Server *server)
+{
+    UA_Server_addRepeatedCallback(server, updateTheAnswer, NULL, 2000, NULL);
+}
+
 
 /**
  * That's it! You're now publishing the selected fields. Open a packet
@@ -171,6 +261,8 @@ run(UA_String *transportProfile, UA_NetworkAddressUrlDataType *networkAddressUrl
 
     /* Add the PubSub components. They are initially disabled */
     addPubSubConnection(server, transportProfile, networkAddressUrl);
+    addVariable(server);
+    addCallback(server);
     addPublishedDataSet(server);
     addDataSetField(server);
     addWriterGroup(server);
