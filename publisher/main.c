@@ -32,8 +32,30 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include <glib-2.0/glib.h>
+#include <time.h>
+#include <sys/time.h>
+
 UA_NodeId connectionIdent, publishedDataSetIdent, writerGroupIdent,
-    dataSetWriterIdent;
+          dataSetWriterIdent;
+GHashTable *g_ping;
+UA_Int64 g_ping_sequence_nr;
+
+int64_t GetTimeStamp(void);
+
+int64_t GetTimeStamp()
+{
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return tv.tv_sec * 1000000 + tv.tv_usec;
+}
+
+struct ping_data
+{
+    int64_t sequence_number;
+    int64_t send_time;
+    int64_t recv_time;
+};
 
 static void
 addPubSubConnection(UA_Server *server, UA_String *transportProfile,
@@ -105,7 +127,7 @@ addDataSetField(UA_Server *server) {
     dataSetFieldConfig.field.variable.fieldNameAlias = UA_STRING("An Int32");
     dataSetFieldConfig.field.variable.promotedField = false;
     dataSetFieldConfig.field.variable.publishParameters.publishedVariable =
-        UA_NODEID_STRING(1, "the.answer");
+        UA_NODEID_STRING(1, "ping");
     dataSetFieldConfig.field.variable.publishParameters.attributeId = UA_ATTRIBUTEID_VALUE;
     UA_DataSetFieldResult result;
     result = UA_Server_addDataSetField(server, publishedDataSetIdent,
@@ -177,16 +199,16 @@ addVariable(UA_Server *server)
 {
     /* Define the attribute of the myInteger variable node */
     UA_VariableAttributes attr = UA_VariableAttributes_default;
-    UA_Int32 myInteger = 42;
-    UA_Variant_setScalar(&attr.value, &myInteger, &UA_TYPES[UA_TYPES_INT32]);
-    attr.description = UA_LOCALIZEDTEXT("en-US","the answer");
-    attr.displayName = UA_LOCALIZEDTEXT("en-US","the answer");
-    attr.dataType = UA_TYPES[UA_TYPES_INT32].typeId;
+    UA_Int64 myInteger = 0;
+    UA_Variant_setScalar(&attr.value, &myInteger, &UA_TYPES[UA_TYPES_INT64]);
+    attr.description = UA_LOCALIZEDTEXT("en-US","ping");
+    attr.displayName = UA_LOCALIZEDTEXT("en-US","ping");
+    attr.dataType = UA_TYPES[UA_TYPES_INT64].typeId;
     attr.accessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
 
     /* Add the variable node to the information model */
-    UA_NodeId myIntegerNodeId = UA_NODEID_STRING(1, "the.answer");
-    UA_QualifiedName myIntegerName = UA_QUALIFIEDNAME(1, "the answer");
+    UA_NodeId myIntegerNodeId = UA_NODEID_STRING(1, "ping");
+    UA_QualifiedName myIntegerName = UA_QUALIFIEDNAME(1, "ping");
     UA_NodeId parentNodeId = UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER);
     UA_NodeId parentReferenceNodeId = UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES);
     UA_Server_addVariableNode(server, myIntegerNodeId, parentNodeId,
@@ -195,39 +217,65 @@ addVariable(UA_Server *server)
 }
 
 static void
-updateTheAnswer(UA_Server *server,
+updatePingSequenceCallback(UA_Server *server,
                void *data) {
 
-    UA_NodeId node_id = UA_NODEID_STRING(1, "the.answer");
+    UA_NodeId node_id = UA_NODEID_STRING(1, "ping");
 
-    UA_Int32 theAnswerInteger = 0;
-    UA_Variant outData;
+    g_ping_sequence_nr = g_ping_sequence_nr + 1;
 
-    UA_StatusCode status = UA_Server_readValue(server, node_id, &outData);
-
-    if (status != UA_STATUSCODE_GOOD)
-    {
-        UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND,
-                "Failed to read the value!");
-        return;
-    }
-
-    theAnswerInteger = *(UA_Int32*)outData.data;
     UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND,
-                "The value is: %i", theAnswerInteger);
+                "The value is: %i", g_ping_sequence_nr);
 
-    theAnswerInteger = theAnswerInteger + 1;
+    struct ping_data *pingData = (struct ping_data*)malloc(sizeof(struct ping_data));
+    pingData->sequence_number = g_ping_sequence_nr;
+    pingData->recv_time = 0;
+    pingData->send_time = 0;
+
+    g_hash_table_insert(g_ping, &g_ping_sequence_nr, &pingData);
 
     UA_Variant updatedValue;
     UA_Variant_init(&updatedValue);
-    UA_Variant_setScalar(&updatedValue, &theAnswerInteger, &UA_TYPES[UA_TYPES_INT32]);
+    UA_Variant_setScalar(&updatedValue, &g_ping_sequence_nr, &UA_TYPES[UA_TYPES_INT64]);
     UA_Server_writeValue(server, node_id, updatedValue);
 }
 
 static void
-addCallback(UA_Server *server)
+addCallbackIncrement(UA_Server *server)
 {
-    UA_Server_addRepeatedCallback(server, updateTheAnswer, NULL, 2000, NULL);
+    UA_Server_addRepeatedCallback(server, updatePingSequenceCallback, NULL, 1000, NULL);
+}
+
+static void
+logPingReadCallback(UA_Server *server,
+               const UA_NodeId *sessionId, void *sessionContext,
+               const UA_NodeId *nodeId, void *nodeContext,
+               const UA_NumericRange *range, const UA_DataValue *data)
+{
+    struct ping_data *pingData = (struct  ping_data*)g_hash_table_lookup(g_ping, &g_ping_sequence_nr);
+    if (pingData != NULL)
+    {
+        if (pingData->send_time == 0)
+        {
+            pingData->send_time = GetTimeStamp();
+            UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND,
+                "Added timestamp on: %d, %ld", pingData->sequence_number, pingData->send_time);
+        }
+
+    }
+
+
+    UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND,
+                "The ping value was read");
+}
+
+static void
+addLogPingReadCallback(UA_Server *server)
+{
+    UA_NodeId node_id = UA_NODEID_STRING(1, "ping");
+    UA_ValueCallback callback;
+    callback.onRead = logPingReadCallback;
+    UA_Server_setVariableNode_valueCallback(server, node_id, callback);
 }
 
 
@@ -251,11 +299,14 @@ static int
 run(UA_String *transportProfile, UA_NetworkAddressUrlDataType *networkAddressUrl) {
     /* Create a server */
     UA_Server *server = UA_Server_new();
+    g_ping_sequence_nr = 0;
+    g_ping = g_hash_table_new(g_int64_hash, g_int64_equal);
 
     /* Add the PubSub components. They are initially disabled */
     addPubSubConnection(server, transportProfile, networkAddressUrl);
     addVariable(server);
-    addCallback(server);
+    addCallbackIncrement(server);
+    addLogPingReadCallback(server);
     addPublishedDataSet(server);
     addDataSetField(server);
     addWriterGroup(server);
