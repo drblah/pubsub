@@ -185,13 +185,13 @@ fillTestDataSetMetaData(UA_DataSetMetaDataType *pMetaData) {
     pMetaData->fields[0].name =  UA_STRING ("DateTime");
     pMetaData->fields[0].valueRank = -1; /* scalar */
 
-    /* Int32 DataType */
+    /* Int64 DataType */
 
     UA_FieldMetaData_init (&pMetaData->fields[1]);
-                        UA_NodeId_copy(&UA_TYPES[UA_TYPES_INT32].typeId,
+                        UA_NodeId_copy(&UA_TYPES[UA_TYPES_INT64].typeId,
                    &pMetaData->fields[1].dataType);
-    pMetaData->fields[1].builtInType = UA_NS0ID_INT32;
-    pMetaData->fields[1].name =  UA_STRING ("Int32");
+    pMetaData->fields[1].builtInType = UA_NS0ID_INT64;
+    pMetaData->fields[1].name =  UA_STRING ("Int64");
     pMetaData->fields[1].valueRank = -1; /* scalar */
 
 }
