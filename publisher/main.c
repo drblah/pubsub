@@ -222,11 +222,7 @@ addVariable(UA_Server *server)
 }
 
 
-static void
-logPingReadCallback(UA_Server *server,
-               const UA_NodeId *sessionId, void *sessionContext,
-               const UA_NodeId *nodeId, void *nodeContext,
-               const UA_NumericRange *range, const UA_DataValue *data);
+
 static void
 updatePingSequenceCallback(UA_Server *server,
                void *data) {
