@@ -33,7 +33,6 @@
 #include <stdlib.h>
 
 #include <glib-2.0/glib.h>
-#include <time.h>
 #include <sys/time.h>
 
 UA_NodeId connectionIdent, publishedDataSetIdent, writerGroupIdent,
@@ -43,6 +42,7 @@ UA_DataSetReaderConfig readerConfig;
 
 GHashTable *global_ping_data;
 UA_Int64 global_ping_sequence_nr;
+FILE *log_file;
 
 int64_t GetTimeStamp(void);
 static void fillTestDataSetMetaData(UA_DataSetMetaDataType *pMetaData);
@@ -270,10 +270,6 @@ logPingReadCallback(UA_Server *server,
         }
 
     }
-
-
-    UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND,
-                "The ping value was read");
 }
 
 static void
@@ -282,6 +278,56 @@ addLogPingReadCallback(UA_Server *server)
     UA_NodeId node_id = UA_NODEID_STRING(1, "ping");
     UA_ValueCallback callback;
     callback.onRead = logPingReadCallback;
+    UA_Server_setVariableNode_valueCallback(server, node_id, callback);
+}
+
+static void
+logPongWriteCallback(UA_Server *server,
+               const UA_NodeId *sessionId, void *sessionContext,
+               const UA_NodeId *nodeId, void *nodeContext,
+               const UA_NumericRange *range, const UA_DataValue *data)
+{
+
+    UA_NodeId node_id = UA_NODEID_NUMERIC(1, 50001);
+    UA_Variant pongValue;
+
+
+    UA_StatusCode status = UA_Server_readValue(server, node_id, &pongValue);
+
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND,
+                "Failed to read pong value", global_ping_sequence_nr);
+        return;
+    }
+
+    UA_Int64 pong = *(uint64_t*)pongValue.data;
+
+    struct ping_data *pingData = (struct  ping_data*)g_hash_table_lookup(global_ping_data, &pong);
+    if (pingData != NULL)
+    {
+        if (pingData->recv_time == 0)
+        {
+            pingData->recv_time = GetTimeStamp();
+            UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND,
+                "Added recv timestamp on: %ld,%ld,%ld", pingData->sequence_number, pingData->send_time, pingData->recv_time);
+
+            double difference = pingData->recv_time - pingData->send_time;
+            difference = difference / 1000.0;
+            fprintf(log_file, "%ld,%lf\n", pingData->sequence_number, difference);
+            fflush(log_file);
+        }
+
+    }
+}
+
+static void
+addLogPongWriteCallback(UA_Server *server)
+{
+    UA_NodeId node_id = UA_NODEID_NUMERIC(1, 50001);
+    UA_ValueCallback callback;
+    callback.onRead = NULL;
+    callback.onWrite = logPongWriteCallback;
     UA_Server_setVariableNode_valueCallback(server, node_id, callback);
 }
 
@@ -458,6 +504,7 @@ run(UA_String *transportProfile, UA_NetworkAddressUrlDataType *networkAddressUrl
     UA_Server *server = UA_Server_new();
     global_ping_sequence_nr = 0;
     global_ping_data = g_hash_table_new(g_int64_hash, g_int64_equal);
+    log_file = fopen("publisher.log", "w");
 
     /* Add the PubSub components. They are initially disabled */
     addPubSubConnection(server, transportProfile, networkAddressUrl);
@@ -472,6 +519,7 @@ run(UA_String *transportProfile, UA_NetworkAddressUrlDataType *networkAddressUrl
     addReaderGroup(server);
     addDataSetReader(server);
     addSubscribedVariables(server, readerIdentifier);
+    addLogPongWriteCallback(server);
 
     /* Enable the PubSubComponents */
     UA_Server_enableAllPubSubComponents(server);
