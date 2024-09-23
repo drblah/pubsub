@@ -25,6 +25,9 @@
 UA_NodeId connectionIdentifier;
 UA_NodeId readerGroupIdentifier;
 UA_NodeId readerIdentifier;
+UA_NodeId publishedDataSetIdent;
+UA_NodeId writerGroupIdent;
+UA_NodeId dataSetWriterIdent;
 
 UA_DataSetReaderConfig readerConfig;
 
@@ -41,8 +44,8 @@ addPubSubConnection(UA_Server *server, UA_String *transportProfile,
     connectionConfig.transportProfileUri = *transportProfile;
     UA_Variant_setScalar(&connectionConfig.address, networkAddressUrl,
                          &UA_TYPES[UA_TYPES_NETWORKADDRESSURLDATATYPE]);
-    connectionConfig.publisherId.idType = UA_PUBLISHERIDTYPE_UINT32;
-    connectionConfig.publisherId.id.uint32 = UA_UInt32_random();
+    connectionConfig.publisherId.idType = UA_PUBLISHERIDTYPE_UINT16;
+    connectionConfig.publisherId.id.uint32 = 2235;
     UA_Server_addPubSubConnection (server, &connectionConfig, &connectionIdentifier);
 }
 
@@ -197,6 +200,128 @@ fillTestDataSetMetaData(UA_DataSetMetaDataType *pMetaData) {
 }
 
 /**
+ * **PublishedDataSet handling**
+ *
+ * The PublishedDataSet (PDS) and PubSubConnection are the toplevel entities and
+ * can exist alone. The PDS contains the collection of the published fields. All
+ * other PubSub elements are directly or indirectly linked with the PDS or
+ * connection. */
+static void
+addPublishedDataSet(UA_Server *server) {
+    /* The PublishedDataSetConfig contains all necessary public
+    * information for the creation of a new PublishedDataSet */
+    UA_PublishedDataSetConfig publishedDataSetConfig;
+    memset(&publishedDataSetConfig, 0, sizeof(UA_PublishedDataSetConfig));
+    publishedDataSetConfig.publishedDataSetType = UA_PUBSUB_DATASET_PUBLISHEDITEMS;
+    publishedDataSetConfig.name = UA_STRING("Demo PDS");
+    UA_Server_addPublishedDataSet(server, &publishedDataSetConfig, &publishedDataSetIdent);
+}
+
+/**
+ * **DataSetField handling**
+ *
+ * The DataSetField (DSF) is part of the PDS and describes exactly one published
+ * field. */
+static void
+addDataSetField(UA_Server *server) {
+    /* Add a field to the previous created PublishedDataSet */
+    {
+        UA_NodeId dataSetFieldIdent;
+        UA_DataSetFieldConfig dataSetFieldConfig;
+        memset(&dataSetFieldConfig, 0, sizeof(UA_DataSetFieldConfig));
+        dataSetFieldConfig.dataSetFieldType = UA_PUBSUB_DATASETFIELD_VARIABLE;
+        dataSetFieldConfig.field.variable.fieldNameAlias = UA_STRING("Server localtime");
+        dataSetFieldConfig.field.variable.promotedField = false;
+        dataSetFieldConfig.field.variable.publishParameters.publishedVariable =
+            UA_NODEID_NUMERIC(1, (UA_UInt32)50000);
+        dataSetFieldConfig.field.variable.publishParameters.attributeId = UA_ATTRIBUTEID_VALUE;
+        UA_DataSetFieldResult result;
+        result = UA_Server_addDataSetField(server, publishedDataSetIdent,
+                                  &dataSetFieldConfig, &dataSetFieldIdent);
+
+        if (result.result != UA_STATUSCODE_GOOD) {
+            printf("Failed to add data set field!!!!!\n");
+        }
+    }
+
+    UA_NodeId dataSetFieldIdent;
+    UA_DataSetFieldConfig dataSetFieldConfig;
+    memset(&dataSetFieldConfig, 0, sizeof(UA_DataSetFieldConfig));
+    dataSetFieldConfig.dataSetFieldType = UA_PUBSUB_DATASETFIELD_VARIABLE;
+    dataSetFieldConfig.field.variable.fieldNameAlias = UA_STRING("An Int64");
+    dataSetFieldConfig.field.variable.promotedField = false;
+    dataSetFieldConfig.field.variable.publishParameters.publishedVariable =
+        UA_NODEID_NUMERIC(1, (UA_UInt32)50001);
+    dataSetFieldConfig.field.variable.publishParameters.attributeId = UA_ATTRIBUTEID_VALUE;
+    UA_DataSetFieldResult result;
+    result = UA_Server_addDataSetField(server, publishedDataSetIdent,
+                              &dataSetFieldConfig, &dataSetFieldIdent);
+    if (result.result != UA_STATUSCODE_GOOD) {
+        printf("Failed to add data set field Int64!!!!!\n");
+    }
+
+}
+
+
+/**
+ * **WriterGroup handling**
+ *
+ * The WriterGroup (WG) is part of the connection and contains the primary
+ * configuration parameters for the message creation. */
+static void
+addWriterGroup(UA_Server *server) {
+    /* Now we create a new WriterGroupConfig and add the group to the existing
+     * PubSubConnection. */
+    UA_WriterGroupConfig writerGroupConfig;
+    memset(&writerGroupConfig, 0, sizeof(UA_WriterGroupConfig));
+    writerGroupConfig.name = UA_STRING("Demo WriterGroup");
+    writerGroupConfig.publishingInterval = 100;
+    writerGroupConfig.writerGroupId = 101;
+    writerGroupConfig.encodingMimeType = UA_PUBSUB_ENCODING_UADP;
+
+    /* Change message settings of writerGroup to send PublisherId,
+     * WriterGroupId in GroupHeader and DataSetWriterId in PayloadHeader
+     * of NetworkMessage */
+    UA_UadpWriterGroupMessageDataType writerGroupMessage;
+    UA_UadpWriterGroupMessageDataType_init(&writerGroupMessage);
+    writerGroupMessage.networkMessageContentMask =
+        (UA_UadpNetworkMessageContentMask)(UA_UADPNETWORKMESSAGECONTENTMASK_PUBLISHERID |
+                                           UA_UADPNETWORKMESSAGECONTENTMASK_GROUPHEADER |
+                                           UA_UADPNETWORKMESSAGECONTENTMASK_WRITERGROUPID |
+                                           UA_UADPNETWORKMESSAGECONTENTMASK_PAYLOADHEADER);
+
+    /* The configuration flags for the messages are encapsulated inside the
+     * message- and transport settings extension objects. These extension
+     * objects are defined by the standard. e.g.
+     * UadpWriterGroupMessageDataType */
+    UA_ExtensionObject_setValue(&writerGroupConfig.messageSettings, &writerGroupMessage,
+                                &UA_TYPES[UA_TYPES_UADPWRITERGROUPMESSAGEDATATYPE]);
+
+    // TODO: Perhaps connectionIdentifier cannot be reused??? If not, make a new variable name
+    UA_Server_addWriterGroup(server, connectionIdentifier, &writerGroupConfig, &writerGroupIdent);
+}
+
+/**
+ * **DataSetWriter handling**
+ *
+ * A DataSetWriter (DSW) is the glue between the WG and the PDS. The DSW is
+ * linked to exactly one PDS and contains additional information for the
+ * message generation. */
+static void
+addDataSetWriter(UA_Server *server) {
+    /* We need now a DataSetWriter within the WriterGroup. This means we must
+     * create a new DataSetWriterConfig and add call the addWriterGroup function. */
+    UA_DataSetWriterConfig dataSetWriterConfig;
+    memset(&dataSetWriterConfig, 0, sizeof(UA_DataSetWriterConfig));
+    dataSetWriterConfig.name = UA_STRING("Demo DataSetWriter");
+    dataSetWriterConfig.dataSetWriterId = 62542;
+    dataSetWriterConfig.keyFrameCount = 0;
+    UA_Server_addDataSetWriter(server, writerGroupIdent, publishedDataSetIdent,
+                               &dataSetWriterConfig, &dataSetWriterIdent);
+}
+
+
+/**
  * Followed by the main server code, making use of the above definitions */
 
 static int
@@ -207,6 +332,11 @@ run(UA_String *transportProfile, UA_NetworkAddressUrlDataType *networkAddressUrl
     addReaderGroup(server);
     addDataSetReader(server);
     addSubscribedVariables(server, readerIdentifier);
+
+    addPublishedDataSet(server);
+    addDataSetField(server);
+    addWriterGroup(server);
+    addDataSetWriter(server);
 
     UA_Server_enableAllPubSubComponents(server);
     UA_Server_runUntilInterrupt(server);
