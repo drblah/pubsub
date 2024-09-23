@@ -232,7 +232,7 @@ updatePingSequenceCallback(UA_Server *server,
     pingData->recv_time = 0;
     pingData->send_time = 0;
 
-    g_hash_table_insert(g_ping, &g_ping_sequence_nr, &pingData);
+    g_hash_table_insert(g_ping, &g_ping_sequence_nr, pingData);
 
     UA_Variant updatedValue;
     UA_Variant_init(&updatedValue);
