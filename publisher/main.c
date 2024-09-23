@@ -41,8 +41,8 @@ UA_NodeId connectionIdent, publishedDataSetIdent, writerGroupIdent,
 
 UA_DataSetReaderConfig readerConfig;
 
-GHashTable *g_ping;
-UA_Int64 g_ping_sequence_nr;
+GHashTable *global_ping_data;
+UA_Int64 global_ping_sequence_nr;
 
 int64_t GetTimeStamp(void);
 static void fillTestDataSetMetaData(UA_DataSetMetaDataType *pMetaData);
@@ -233,21 +233,21 @@ updatePingSequenceCallback(UA_Server *server,
 
     UA_NodeId node_id = UA_NODEID_STRING(1, "ping");
 
-    g_ping_sequence_nr = g_ping_sequence_nr + 1;
+    global_ping_sequence_nr = global_ping_sequence_nr + 1;
 
     UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND,
-                "The value is: %i", g_ping_sequence_nr);
+                "The value is: %i", global_ping_sequence_nr);
 
     struct ping_data *pingData = (struct ping_data*)malloc(sizeof(struct ping_data));
-    pingData->sequence_number = g_ping_sequence_nr;
+    pingData->sequence_number = global_ping_sequence_nr;
     pingData->recv_time = 0;
     pingData->send_time = 0;
 
-    g_hash_table_insert(g_ping, &g_ping_sequence_nr, pingData);
+    g_hash_table_insert(global_ping_data, &global_ping_sequence_nr, pingData);
 
     UA_Variant updatedValue;
     UA_Variant_init(&updatedValue);
-    UA_Variant_setScalar(&updatedValue, &g_ping_sequence_nr, &UA_TYPES[UA_TYPES_INT64]);
+    UA_Variant_setScalar(&updatedValue, &global_ping_sequence_nr, &UA_TYPES[UA_TYPES_INT64]);
     UA_Server_writeValue(server, node_id, updatedValue);
 }
 
@@ -263,7 +263,7 @@ logPingReadCallback(UA_Server *server,
                const UA_NodeId *nodeId, void *nodeContext,
                const UA_NumericRange *range, const UA_DataValue *data)
 {
-    struct ping_data *pingData = (struct  ping_data*)g_hash_table_lookup(g_ping, &g_ping_sequence_nr);
+    struct ping_data *pingData = (struct  ping_data*)g_hash_table_lookup(global_ping_data, &global_ping_sequence_nr);
     if (pingData != NULL)
     {
         if (pingData->send_time == 0)
@@ -460,8 +460,8 @@ static int
 run(UA_String *transportProfile, UA_NetworkAddressUrlDataType *networkAddressUrl) {
     /* Create a server */
     UA_Server *server = UA_Server_new();
-    g_ping_sequence_nr = 0;
-    g_ping = g_hash_table_new(g_int64_hash, g_int64_equal);
+    global_ping_sequence_nr = 0;
+    global_ping_data = g_hash_table_new(g_int64_hash, g_int64_equal);
 
     /* Add the PubSub components. They are initially disabled */
     addPubSubConnection(server, transportProfile, networkAddressUrl);
