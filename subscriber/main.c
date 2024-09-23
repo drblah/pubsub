@@ -22,6 +22,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include <glib-2.0/glib.h>
+#include <sys/time.h>
+
 UA_NodeId connectionIdentifier;
 UA_NodeId readerGroupIdentifier;
 UA_NodeId readerIdentifier;
@@ -30,6 +33,23 @@ UA_NodeId writerGroupIdent;
 UA_NodeId dataSetWriterIdent;
 
 UA_DataSetReaderConfig readerConfig;
+
+FILE *subscriber_log;
+GHashTable *global_ping_data;
+
+int64_t GetTimeStamp()
+{
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return tv.tv_sec * 1000000 + tv.tv_usec;
+}
+
+struct ping_data
+{
+    int64_t sequence_number;
+    int64_t send_time;
+    int64_t recv_time;
+};
 
 static void fillTestDataSetMetaData(UA_DataSetMetaDataType *pMetaData);
 
@@ -320,13 +340,89 @@ addDataSetWriter(UA_Server *server) {
                                &dataSetWriterConfig, &dataSetWriterIdent);
 }
 
+static void
+logPingRecv(UA_Server *server,
+               const UA_NodeId *sessionId, void *sessionContext,
+               const UA_NodeId *nodeId, void *nodeContext,
+               const UA_NumericRange *range, const UA_DataValue *data)
+{
+    UA_Int64 ping = *(UA_Int64*)data->value.data;
+    UA_Int64 *key_ptr = g_new(UA_Int64, 1);
+    *key_ptr = ping;
 
+    if (!g_hash_table_contains(global_ping_data, key_ptr))
+    {
+        struct ping_data *pingData = (struct ping_data*)malloc(sizeof(struct ping_data));
+        pingData->sequence_number = ping;
+        pingData->recv_time = GetTimeStamp();
+        pingData->send_time = 0;
+
+        UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND,
+                "Saving: %ld", pingData);
+
+        g_hash_table_insert(global_ping_data, key_ptr, pingData);
+
+        UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND,
+                "Received: %ld", ping);
+    }
+
+
+}
+
+static void
+logPongSend(UA_Server *server,
+               const UA_NodeId *sessionId, void *sessionContext,
+               const UA_NodeId *nodeId, void *nodeContext,
+               const UA_NumericRange *range, const UA_DataValue *data)
+{
+    UA_Int64 pong = *(uint64_t*)data->value.data;
+
+    UA_Int64 *key_ptr = g_new(UA_Int64, 1);
+    *key_ptr = pong;
+
+    UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND,
+                "Looking up: %ld", pong);
+    struct ping_data *pingData = (struct ping_data*)g_hash_table_lookup(global_ping_data, key_ptr);
+
+    UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND,
+                "Loading: %ld", pingData->sequence_number);
+    if (pingData != NULL)
+    {
+        if (pingData->send_time == 0)
+        {
+            pingData->send_time = GetTimeStamp();
+            double processingTime = pingData->send_time - pingData->recv_time;
+            processingTime = processingTime / 1000.0;
+            fprintf(subscriber_log,"%ld,%lf\n", pong, processingTime);
+            fflush(subscriber_log);
+        }
+    }
+
+    UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND,
+                    "Sent: %ld", pong);
+
+}
+
+
+static void
+addSubscriberProcessingTimeCallback(UA_Server *server)
+{
+    UA_NodeId node_id = UA_NODEID_NUMERIC(1, 50001);
+    UA_ValueCallback callback;
+    callback.onRead = logPongSend;
+    callback.onWrite = logPingRecv;
+    UA_Server_setVariableNode_valueCallback(server, node_id, callback);
+}
 /**
  * Followed by the main server code, making use of the above definitions */
 
 static int
 run(UA_String *transportProfile, UA_NetworkAddressUrlDataType *networkAddressUrl) {
     UA_Server *server = UA_Server_new();
+
+    global_ping_data = g_hash_table_new(g_int64_hash, g_int64_equal);
+    subscriber_log = fopen("subscriber.log", "w");
+
 
     addPubSubConnection(server, transportProfile, networkAddressUrl);
     addReaderGroup(server);
@@ -337,6 +433,7 @@ run(UA_String *transportProfile, UA_NetworkAddressUrlDataType *networkAddressUrl
     addDataSetField(server);
     addWriterGroup(server);
     addDataSetWriter(server);
+    addSubscriberProcessingTimeCallback(server);
 
     UA_Server_enableAllPubSubComponents(server);
     UA_Server_runUntilInterrupt(server);
